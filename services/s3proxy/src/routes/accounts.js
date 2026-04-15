@@ -139,9 +139,11 @@ function toRtdbAccountDocument(account) {
     emailOwner: account.email_owner ?? '',
     supabaseAccessToken: account.supabase_access_token ?? '',
     supabaseAccessTokenExp: account.supabase_access_token_exp ?? null,
+    supabaseAccessTokenExperimental: account.supabase_access_token_exp ?? null,
     supabase: {
       accessToken: account.supabase_access_token ?? '',
       accessTokenExp: account.supabase_access_token_exp ?? null,
+      accessTokenExperimental: account.supabase_access_token_exp ?? null,
     },
     quotaBytes: account.quota_bytes,
     usedBytes: account.used_bytes,
@@ -161,6 +163,7 @@ function toPublicAccount(account, action = null) {
     payloadSigningMode: account.payload_signing_mode ?? 'unsigned',
     emailOwner: account.email_owner ?? '',
     supabaseAccessTokenExp: account.supabase_access_token_exp ?? null,
+    supabaseAccessTokenExperimental: account.supabase_access_token_exp ?? null,
     hasSupabaseAccessToken: Boolean(account.supabase_access_token),
     quotaBytes: account.quota_bytes,
     usedBytes: account.used_bytes,
@@ -220,9 +223,14 @@ function normalizeAccountEntries(payload) {
     )
     const supabaseAccessTokenExp = normalizeSupabaseAccessTokenExp(
       entry.supabaseAccessTokenExp
+      ?? entry.supabaseAccessTokenExperimental
       ?? entry.supabase_access_token_exp
+      ?? entry.supabase_access_token_experimental
       ?? entry['supabase.accessToken.exp']
+      ?? entry['supabase.accessToken.experimental']
       ?? entry?.supabase?.accessTokenExp
+      ?? entry?.supabase?.accessTokenExperimental
+      ?? entry?.supabase?.accessToken?.experimental
       ?? entry?.supabase?.accessToken?.exp,
     )
 
@@ -246,6 +254,9 @@ function normalizeAccountEntries(payload) {
     }
     if (supabaseAccessToken && !isSupabaseAccessToken(supabaseAccessToken)) {
       errors.push(`${sourceLabel}.supabaseAccessToken must match token format sbp_...`)
+    }
+    if (supabaseAccessTokenExp && !isSupabaseAccessToken(supabaseAccessTokenExp)) {
+      errors.push(`${sourceLabel}.supabaseAccessTokenExp must match token format sbp_...`)
     }
 
     if (accountIdValidation.valid) {

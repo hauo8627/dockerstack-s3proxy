@@ -87,7 +87,7 @@ db.exec(`
     payload_signing_mode TEXT NOT NULL DEFAULT 'unsigned',
     email_owner    TEXT    NOT NULL DEFAULT '',
     supabase_access_token TEXT NOT NULL DEFAULT '',
-    supabase_access_token_exp INTEGER,
+    supabase_access_token_exp TEXT,
     quota_bytes    INTEGER NOT NULL DEFAULT 5368709120,
     used_bytes     INTEGER NOT NULL DEFAULT 0,
     active         INTEGER NOT NULL DEFAULT 1,
@@ -166,7 +166,7 @@ ensureColumn('accounts', 'addressing_style', "addressing_style TEXT NOT NULL DEF
 ensureColumn('accounts', 'payload_signing_mode', "payload_signing_mode TEXT NOT NULL DEFAULT 'unsigned'")
 ensureColumn('accounts', 'email_owner', "email_owner TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'supabase_access_token', "supabase_access_token TEXT NOT NULL DEFAULT ''")
-ensureColumn('accounts', 'supabase_access_token_exp', 'supabase_access_token_exp INTEGER')
+ensureColumn('accounts', 'supabase_access_token_exp', 'supabase_access_token_exp TEXT')
 ensureColumn('buckets', 'updated_at', 'updated_at INTEGER NOT NULL DEFAULT 0')
 ensureColumn('buckets', 'deleted_at', 'deleted_at INTEGER')
 ensureColumn('buckets', 'versioning_status', "versioning_status TEXT NOT NULL DEFAULT ''")

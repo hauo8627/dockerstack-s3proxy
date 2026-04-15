@@ -100,6 +100,7 @@ function toPublicAccount(row) {
     payloadSigningMode: row.payload_signing_mode ?? 'unsigned',
     emailOwner: row.email_owner ?? '',
     supabaseAccessTokenExp: row.supabase_access_token_exp ?? null,
+    supabaseAccessTokenExperimental: row.supabase_access_token_exp ?? null,
     hasSupabaseAccessToken: Boolean(row.supabase_access_token),
     active: row.active === 1 || row.active === true,
     usedBytes: row.used_bytes ?? 0,
@@ -196,9 +197,11 @@ function toRtdbAccountDocument(account) {
     emailOwner: account.email_owner ?? '',
     supabaseAccessToken: account.supabase_access_token ?? '',
     supabaseAccessTokenExp: account.supabase_access_token_exp ?? null,
+    supabaseAccessTokenExperimental: account.supabase_access_token_exp ?? null,
     supabase: {
       accessToken: account.supabase_access_token ?? '',
       accessTokenExp: account.supabase_access_token_exp ?? null,
+      accessTokenExperimental: account.supabase_access_token_exp ?? null,
     },
     quotaBytes: account.quota_bytes,
     usedBytes: account.used_bytes,
@@ -250,15 +253,20 @@ function normalizeAccountPayload(payload, existing = null) {
     existing?.supabase_access_token_exp,
     [
       'supabaseAccessTokenExp',
+      'supabaseAccessTokenExperimental',
       'supabase_access_token_exp',
+      'supabase_access_token_experimental',
       'supabase.accessTokenExp',
+      'supabase.accessTokenExperimental',
       'supabase.access_token_exp',
       'supabase.accessToken.exp',
+      'supabase.accessToken.experimental',
+      'supabase.access_token.experimental',
       'supabase.access_token.exp',
     ],
   )
   const supabaseAccessTokenExp = supabaseAccessTokenExpInput === ''
-    ? (existing?.supabase_access_token_exp ?? null)
+    ? normalizeSupabaseAccessTokenExp(existing?.supabase_access_token_exp)
     : normalizeSupabaseAccessTokenExp(supabaseAccessTokenExpInput)
   const quotaBytes = normalizePositiveInteger(
     payload.quotaBytes ?? payload.quota_bytes,
@@ -290,6 +298,9 @@ function normalizeAccountPayload(payload, existing = null) {
   if (emailOwner && !isEmailOwner(emailOwner)) errors.push('emailOwner must be a valid email')
   if (supabaseAccessToken && !isSupabaseAccessToken(supabaseAccessToken)) {
     errors.push('supabaseAccessToken must match token format sbp_...')
+  }
+  if (supabaseAccessTokenExp && !isSupabaseAccessToken(supabaseAccessTokenExp)) {
+    errors.push('supabaseAccessTokenExp must match token format sbp_...')
   }
 
   if (endpoint) {

@@ -53,18 +53,19 @@ function parseKeyValueObjects(rawInput) {
 function extractValueByKeys(rawInput, keys = []) {
   for (const key of keys) {
     const escapedKey = escapeRegex(key)
-    const quotedPattern = new RegExp(`["']${escapedKey}["']\\s*[:=]\\s*(["'])(?<value>(?:\\\\.|(?!\\1).)*)\\1`, 'is')
+    const quotedPattern = new RegExp(`(["'])${escapedKey}\\1\\s*[:=]\\s*(["'])(?<value>(?:\\\\.|(?!\\2).)*)\\2`, 'is')
     const quotedMatch = rawInput.match(quotedPattern)
     if (quotedMatch?.groups?.value) {
       return normalizeString(unescapeQuotedText(quotedMatch.groups.value))
     }
 
-    const unquotedPattern = new RegExp(`["']?${escapedKey}["']?\\s*[:=]\\s*([^\\r\\n,}\\]]+)`, 'i')
+    const unquotedPattern = new RegExp(`(["'])?${escapedKey}\\1?\\s*[:=]\\s*([^\\r\\n,}\\]]+)`, 'i')
     const unquotedMatch = rawInput.match(unquotedPattern)
-    if (unquotedMatch?.[1]) {
-      return normalizeString(unquotedMatch[1].replace(/^["']|["']$/g, ''))
+    if (unquotedMatch?.[2]) {
+      return normalizeString(unquotedMatch[2].replace(/^["']|["']$/g, ''))
     }
   }
+
   return ''
 }
 
@@ -83,6 +84,7 @@ function parseDatabaseDescriptor(value) {
   for (const chunk of descriptor.split('|')) {
     const match = chunk.match(/^\s*([A-Za-z][A-Za-z0-9_.-]*)\s*:\s*(.+?)\s*$/)
     if (!match) continue
+
     const key = match[1].toLowerCase()
     const fieldValue = normalizeString(match[2].replace(/^["']|["']$/g, ''))
 
@@ -122,17 +124,20 @@ function sanitizeBucketName(value) {
 function deriveBucketFromEmail(emailOwner) {
   const email = normalizeString(emailOwner).toLowerCase()
   if (!EMAIL_REGEX.test(email)) return ''
+
   const localPart = email.split('@')[0] || ''
   let bucket = sanitizeBucketName(localPart)
   if (!bucket) {
     bucket = sanitizeBucketName(`bucket-${localPart}`) || 'bucket-default'
   }
+
   return bucket
 }
 
 function deriveAccountId(emailOwner, projectRef) {
   const username = sanitizeAccountPart(normalizeString(emailOwner).split('@')[0])
   const ref = sanitizeAccountPart(projectRef)
+
   if (username && ref) return `${username}-${ref}`.slice(0, 80)
   if (username) return username.slice(0, 80)
   if (ref) return `supabase-${ref}`.slice(0, 80)
@@ -194,26 +199,33 @@ export function normalizeSupabaseAccessTokenExp(value) {
   if (value === undefined || value === null || value === '') return null
 
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    if (Object.prototype.hasOwnProperty.call(value, 'experimental')) {
+      return normalizeSupabaseAccessTokenExp(value.experimental)
+    }
     if (Object.prototype.hasOwnProperty.call(value, 'exp')) {
       return normalizeSupabaseAccessTokenExp(value.exp)
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'accessTokenExperimental')) {
+      return normalizeSupabaseAccessTokenExp(value.accessTokenExperimental)
+    }
+    if (Object.prototype.hasOwnProperty.call(value, 'accessTokenExp')) {
+      return normalizeSupabaseAccessTokenExp(value.accessTokenExp)
     }
   }
 
   const raw = normalizeString(value)
   if (!raw) return null
+  if (!isSupabaseAccessToken(raw)) return null
+  return raw
+}
 
-  if (/^\d+$/.test(raw)) {
-    const numeric = Number(raw)
-    if (!Number.isFinite(numeric) || numeric <= 0) return null
-    return Math.trunc(numeric > 1_000_000_000_000 ? numeric / 1000 : numeric)
-  }
-
-  const parsed = Date.parse(raw)
-  if (Number.isFinite(parsed)) {
-    return Math.trunc(parsed / 1000)
-  }
-
-  return null
+function hasRequiredLocalFields(extracted) {
+  return Boolean(
+    normalizeString(extracted?.endpoint)
+    && normalizeString(extracted?.accessKeyId)
+    && normalizeString(extracted?.secretAccessKey)
+    && normalizeString(extracted?.bucketName),
+  )
 }
 
 function extractRawSupabaseFields(rawInput) {
@@ -240,14 +252,26 @@ function extractRawSupabaseFields(rawInput) {
     || extractValueByKeys(rawInput, ['supabase.com.accessToken', 'supabase.accessToken'])
     || extractFirstAccessToken(rawInput)
 
-  const accessTokenExperimental = getFromMap('supabase.com.accesstoken.experimental')
-    || extractValueByKeys(rawInput, ['supabase.com.accessToken.experimental', 'supabase.accessToken.experimental'])
+  const accessTokenExperimentalRaw = getFromMap('supabase.com.accesstoken.experimental')
+    || getFromMap('supabase.com.accesstokenexp')
+    || extractValueByKeys(rawInput, [
+      'supabase.com.accessToken.experimental',
+      'supabase.accessToken.experimental',
+      'supabase.com.accessTokenExp',
+      'supabase.accessTokenExp',
+      'accessTokenExperimental',
+      'accessTokenExp',
+      'supabase_access_token_exp',
+    ])
 
   const accessTokenExpRaw = getFromMap('supabase.com.accesstoken.exp')
     || getFromMap('supabase.accesstoken.exp')
     || extractValueByKeys(rawInput, [
       'supabase.com.accessToken.exp',
       'supabase.accessToken.exp',
+      'supabase.accessToken.experimental',
+      'supabase.accessTokenExp',
+      'accessToken.experimental',
       'accessToken.exp',
       'supabase_access_token_exp',
     ])
@@ -260,16 +284,23 @@ function extractRawSupabaseFields(rawInput) {
   const endpoint = normalizeEndpoint(parsedDatabase.endpoint)
   const endpointValidated = SUPABASE_S3_ENDPOINT_REGEX.test(endpoint) ? endpoint : ''
   const projectRef = deriveProjectRefFromEndpoint(endpointValidated)
+
   const accessKeyIdRaw = normalizeString(parsedDatabase.accessKeyId)
   const secretAccessKeyRaw = normalizeString(parsedDatabase.secretAccessKey)
+
   const accessKeyId = ACCESS_KEY_ID_REGEX.test(accessKeyIdRaw) ? accessKeyIdRaw : ''
   const secretAccessKey = SECRET_ACCESS_KEY_REGEX.test(secretAccessKeyRaw) ? secretAccessKeyRaw : ''
+
   const emailOwner = isEmailOwner(emailOwnerRaw) ? normalizeString(emailOwnerRaw).toLowerCase() : ''
+
   const bucketRaw = parsedDatabase.bucketName
     || extractValueByKeys(rawInput, ['bucketName', 'bucket', 'supabase.bucketName'])
   const bucketName = sanitizeBucketName(bucketRaw)
   const fallbackBucketName = deriveBucketFromEmail(emailOwner)
   const resolvedBucketName = bucketName || fallbackBucketName
+
+  const experimentalToken = normalizeSupabaseAccessTokenExp(accessTokenExperimentalRaw)
+  const expToken = normalizeSupabaseAccessTokenExp(accessTokenExpRaw) || experimentalToken
 
   const extracted = {
     endpoint: endpointValidated,
@@ -277,8 +308,8 @@ function extractRawSupabaseFields(rawInput) {
     accessKeyId,
     secretAccessKey,
     accessToken: normalizeString(accessToken),
-    accessTokenExperimental: normalizeString(accessTokenExperimental),
-    accessTokenExp: normalizeSupabaseAccessTokenExp(accessTokenExpRaw),
+    accessTokenExperimental: experimentalToken || normalizeString(accessTokenExperimentalRaw),
+    accessTokenExp: expToken,
     emailOwner,
     bucketName: resolvedBucketName,
     bucketNameSource: bucketName ? 'input' : (fallbackBucketName ? 'email_default' : 'none'),
@@ -303,7 +334,10 @@ function extractRawSupabaseFields(rawInput) {
     warnings.push('SecretAccessKey format is invalid')
   }
   if (extracted.accessToken && !isSupabaseAccessToken(extracted.accessToken)) {
-    warnings.push('supabase.com.accessToken format does not match expected `sbp_...` token')
+    warnings.push('supabase.com.accessToken format does not match expected sbp_* token')
+  }
+  if (accessTokenExperimentalRaw && !experimentalToken) {
+    warnings.push('supabase.com.accessToken.experimental format is invalid')
   }
   if (!extracted.bucketName) {
     warnings.push('bucketName could not be derived from payload or emailOwner')
@@ -317,6 +351,7 @@ function extractRawSupabaseFields(rawInput) {
     extracted,
     missingRequired,
     warnings,
+    notes: [],
     canLookupRemote: isSupabaseAccessToken(extracted.accessToken),
   }
 }
@@ -402,8 +437,20 @@ export function createAccountDraftFromSupabase(preview, options = {}) {
     payloadSigningMode: 'unsigned',
     emailOwner: normalizeString(extracted.emailOwner || '').toLowerCase(),
     supabaseAccessToken: normalizeString(extracted.accessToken || ''),
-    supabaseAccessTokenExp: normalizeSupabaseAccessTokenExp(extracted.accessTokenExp),
+    supabaseAccessTokenExp: normalizeSupabaseAccessTokenExp(
+      extracted.accessTokenExp || extracted.accessTokenExperimental,
+    ),
   }
+}
+
+function isAccountDraftSufficient(accountDraft) {
+  return Boolean(
+    accountDraft
+    && normalizeString(accountDraft.endpoint)
+    && normalizeString(accountDraft.accessKeyId)
+    && normalizeString(accountDraft.secretAccessKey)
+    && normalizeString(accountDraft.bucket),
+  )
 }
 
 export async function previewSupabaseS3(rawInput, options = {}) {
@@ -414,12 +461,14 @@ export async function previewSupabaseS3(rawInput, options = {}) {
     remote: {
       attempted: false,
       ok: false,
+      fallbackToLocal: false,
       project: null,
       profile: null,
       buckets: [],
       bucketResolved: null,
       bucketCreated: false,
       error: '',
+      profileWarning: '',
     },
     accountDraft: createAccountDraftFromSupabase(local),
   }
@@ -433,26 +482,35 @@ export async function previewSupabaseS3(rawInput, options = {}) {
 
   try {
     const accessToken = local.extracted.accessToken
-    const profile = await supabaseManagementRequest('/profile', accessToken)
     const projects = await supabaseManagementRequest('/projects', accessToken)
     const matchedProject = findProject(projects, local.extracted.projectRef)
 
+    let profile = null
+    let profileWarning = ''
+
     let bucketItems = []
     let bucketCreated = false
-    const resolvedBucketName = sanitizeBucketName(options.bucketName || local.extracted.bucketName || '')
-    let bucketResolved = resolvedBucketName || ''
+    const overrideBucket = sanitizeBucketName(options.bucketName || '')
+    let bucketResolved = overrideBucket || sanitizeBucketName(local.extracted.bucketName || '') || ''
+
+    if ((!local.extracted.emailOwner || !bucketResolved) && accessToken) {
+      try {
+        profile = await supabaseManagementRequest('/profile', accessToken)
+      } catch (err) {
+        profileWarning = err?.message ?? String(err)
+      }
+    }
+
+    const profileEmail = normalizeString(profile?.primary_email || profile?.email).toLowerCase()
+    const emailOwner = local.extracted.emailOwner || (isEmailOwner(profileEmail) ? profileEmail : '')
+
+    if (!bucketResolved) {
+      bucketResolved = deriveBucketFromEmail(emailOwner)
+    }
 
     if (matchedProject?.ref) {
       const bucketsPath = `/projects/${encodeURIComponent(matchedProject.ref)}/storage/buckets`
       bucketItems = normalizeBucketItems(await supabaseManagementRequest(bucketsPath, accessToken))
-      if (!bucketResolved) {
-        const derived = deriveBucketFromEmail(
-          normalizeString(local.extracted.emailOwner)
-          || normalizeString(profile?.primary_email)
-          || normalizeString(profile?.email),
-        )
-        bucketResolved = derived || ''
-      }
 
       const bucketExists = bucketResolved
         ? bucketItems.some((bucket) => bucket.name === bucketResolved)
@@ -471,49 +529,70 @@ export async function previewSupabaseS3(rawInput, options = {}) {
       }
     }
 
-    const profileEmail = normalizeString(profile?.primary_email || profile?.email).toLowerCase()
-    const emailOwner = local.extracted.emailOwner || (isEmailOwner(profileEmail) ? profileEmail : '')
-
     response.extracted = {
       ...response.extracted,
       emailOwner,
       bucketName: bucketResolved || response.extracted.bucketName,
       bucketNameSource: bucketResolved ? 'api_lookup' : response.extracted.bucketNameSource,
     }
+
     response.remote = {
       attempted: true,
       ok: true,
+      fallbackToLocal: false,
       project: matchedProject ? {
         ref: normalizeString(matchedProject.ref),
         name: normalizeString(matchedProject.name),
         region: normalizeString(matchedProject.region),
         status: normalizeString(matchedProject.status),
       } : null,
-      profile: {
+      profile: profile ? {
         id: normalizeString(profile?.id),
         email: profileEmail || '',
-      },
+      } : null,
       buckets: bucketItems.map((bucket) => bucket.name),
       bucketResolved: bucketResolved || null,
       bucketCreated,
       error: '',
+      profileWarning,
     }
+
+    if (profileWarning) {
+      response.notes = [...response.notes, `Profile lookup skipped: ${profileWarning}`]
+    }
+
     response.accountDraft = createAccountDraftFromSupabase(response, {
       bucketName: bucketResolved || undefined,
       region: normalizeString(matchedProject?.region || ''),
     })
   } catch (err) {
+    const errorMessage = err?.message ?? String(err)
+    const fallbackToLocal = isAccountDraftSufficient(response.accountDraft)
+
     response.remote = {
       attempted: true,
       ok: false,
+      fallbackToLocal,
       project: null,
       profile: null,
       buckets: [],
       bucketResolved: null,
       bucketCreated: false,
-      error: err?.message ?? String(err),
+      error: errorMessage,
+      profileWarning: '',
     }
-    response.warnings = [...response.warnings, response.remote.error]
+
+    if (fallbackToLocal) {
+      response.notes = [...response.notes, `Remote lookup failed, using local parsed data: ${errorMessage}`]
+    } else {
+      response.warnings = [...response.warnings, errorMessage]
+    }
+  }
+
+  if (!hasRequiredLocalFields(response.extracted) && response.remote.error) {
+    if (!response.warnings.includes(response.remote.error)) {
+      response.warnings = [...response.warnings, response.remote.error]
+    }
   }
 
   return response

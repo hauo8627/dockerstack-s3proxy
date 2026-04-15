@@ -38,6 +38,50 @@
     #accountsBody td { word-break: break-word; }
     #jobsBody td:nth-child(5) pre { margin: 0; max-width: 320px; max-height: 140px; overflow: auto; }
     #accountsBody td:nth-child(2) { min-width: 260px; }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.76);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1100;
+      padding: 16px;
+    }
+    .modal-backdrop.show {
+      display: flex;
+    }
+    .modal-box {
+      width: min(540px, 100%);
+      background: #0f172a;
+      border: 1px solid #2c3c65;
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 16px 40px rgba(2, 6, 23, 0.6);
+    }
+    .modal-box.warn {
+      border-color: #9a3412;
+    }
+    .modal-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #e2e8f0;
+    }
+    .modal-message {
+      white-space: pre-wrap;
+      line-height: 1.4;
+      color: #cbd5e1;
+      margin-bottom: 12px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
 
     @media (max-width: 960px) {
       .wrap { padding: 14px; }
@@ -46,6 +90,7 @@
       form { grid-template-columns: 1fr; }
       .span2 { grid-column: span 1; }
       .service-tool .service-actions button { flex: 1 1 100%; }
+      .modal-actions button { flex: 1 1 100%; }
     }
 
     @media (max-width: 760px) {
@@ -152,7 +197,7 @@
       <input id="accountBucket" placeholder="bucket" required />
       <input id="accountEmailOwner" placeholder="emailOwner" />
       <input id="accountSupabaseAccessToken" placeholder="supabaseAccessToken (sbp_...)" />
-      <input id="accountSupabaseAccessTokenExp" placeholder="supabaseAccessTokenExp (epoch second)" />
+      <input id="accountSupabaseAccessTokenExp" placeholder="supabaseAccessTokenExp (experimental sbp_...)" />
       <select id="accountAddressingStyle">
         <option value="path">path</option>
         <option value="virtual">virtual</option>
@@ -171,7 +216,7 @@
       <button type="submit">Lưu account</button>
       <button type="button" id="accountResetBtn" class="secondary">Clear form</button>
     </form>
-    <p class="hint">Edit: bấm edit để nạp dữ liệu; `secretAccessKey` và `supabaseAccessToken` để trống sẽ giữ giá trị cũ. Nếu không có bucketName thì mặc định lấy username trong emailOwner.</p>
+    <p class="hint">Edit: bấm edit để nạp dữ liệu; `secretAccessKey`, `supabaseAccessToken`, `supabaseAccessTokenExp` để trống sẽ giữ giá trị cũ.</p>
 
     <div class="table-wrap">
     <table class="responsive-table">
@@ -185,6 +230,17 @@
     <h2>Kết quả kiểm thử API file</h2>
     <pre id="log">(chưa chạy)</pre>
   </section>
+</div>
+
+<div id="modalBackdrop" class="modal-backdrop" aria-hidden="true">
+  <div id="modalBox" class="modal-box" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div id="modalTitle" class="modal-title">Thông báo</div>
+    <div id="modalMessage" class="modal-message"></div>
+    <div class="modal-actions">
+      <button id="modalCancelBtn" type="button" class="secondary">Hủy</button>
+      <button id="modalConfirmBtn" type="button">Đồng ý</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -204,7 +260,14 @@ const accountServiceBucketNameEl = document.getElementById('accountServiceBucket
 const accountServiceRawInputEl = document.getElementById('accountServiceRawInput')
 const accountServiceParseBtn = document.getElementById('accountServiceParseBtn')
 const accountServicePreviewEl = document.getElementById('accountServicePreview')
+const modalBackdrop = document.getElementById('modalBackdrop')
+const modalBox = document.getElementById('modalBox')
+const modalTitle = document.getElementById('modalTitle')
+const modalMessage = document.getElementById('modalMessage')
+const modalCancelBtn = document.getElementById('modalCancelBtn')
+const modalConfirmBtn = document.getElementById('modalConfirmBtn')
 let deferredInstallPrompt = null
+let modalResolver = null
 
 function fmtBytes(bytes) {
   if (!bytes) return '0 B'
@@ -223,11 +286,11 @@ function fmtTime(ts) {
   return new Date(ts).toISOString().replace('T', ' ').slice(0, 16)
 }
 
-function fmtTokenExp(expSeconds) {
-  if (!expSeconds) return '-'
-  const numeric = Number(expSeconds)
-  if (!Number.isFinite(numeric) || numeric <= 0) return '-'
-  return new Date(numeric * 1000).toISOString().replace('T', ' ').slice(0, 16)
+function fmtTokenPreview(tokenValue) {
+  const token = String(tokenValue || '').trim()
+  if (!token) return '-'
+  if (token.length <= 18) return token
+  return `${token.slice(0, 12)}...${token.slice(-6)}`
 }
 
 function selectedServiceKinds() {
@@ -242,6 +305,57 @@ async function api(path, options = {}) {
   }
   return body
 }
+
+function closeModal(result) {
+  if (!modalResolver) return
+  const resolver = modalResolver
+  modalResolver = null
+  modalBackdrop.classList.remove('show')
+  modalBackdrop.setAttribute('aria-hidden', 'true')
+  resolver(result)
+}
+
+async function openModal(options = {}) {
+  if (modalResolver) {
+    closeModal(false)
+  }
+
+  const {
+    title = 'Xác nhận',
+    message = '',
+    confirmText = 'Đồng ý',
+    cancelText = 'Hủy',
+    showCancel = true,
+    tone = 'default',
+  } = options
+
+  modalTitle.textContent = title
+  modalMessage.textContent = String(message || '')
+  modalConfirmBtn.textContent = confirmText
+  modalCancelBtn.textContent = cancelText
+  modalCancelBtn.style.display = showCancel ? 'inline-block' : 'none'
+  modalBox.classList.toggle('warn', tone === 'warn')
+
+  modalBackdrop.classList.add('show')
+  modalBackdrop.setAttribute('aria-hidden', 'false')
+
+  return new Promise((resolve) => {
+    modalResolver = resolve
+  })
+}
+
+modalConfirmBtn.addEventListener('click', () => closeModal(true))
+modalCancelBtn.addEventListener('click', () => closeModal(false))
+modalBackdrop.addEventListener('click', (event) => {
+  if (event.target === modalBackdrop) {
+    closeModal(false)
+  }
+})
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && modalResolver) {
+    closeModal(false)
+  }
+})
 
 function bindCronForm(kinds) {
   const select = document.getElementById('jobKind')
@@ -377,13 +491,20 @@ function buildPreviewText(preview) {
     `emailOwner: ${extracted.emailOwner || '-'}`,
     `bucketName: ${extracted.bucketName || '-'} (${extracted.bucketNameSource || 'unknown'})`,
     `supabase.accessToken: ${extracted.accessToken ? '(đã parse)' : '-'}`,
-    `supabase.accessToken.exp: ${extracted.accessTokenExp || '-'} (${fmtTokenExp(extracted.accessTokenExp)})`,
+    `supabase.accessToken.exp (experimental): ${extracted.accessTokenExp ? fmtTokenPreview(extracted.accessTokenExp) : '-'}`,
   ]
 
   if (preview.remote?.attempted) {
     lines.push('')
-    lines.push(`remoteLookup: ${preview.remote.ok ? 'ok' : 'error'}`)
+    if (preview.remote.ok) {
+      lines.push('remoteLookup: ok')
+    } else if (preview.remote.fallbackToLocal) {
+      lines.push('remoteLookup: fallback_local')
+    } else {
+      lines.push('remoteLookup: error')
+    }
     if (preview.remote.error) lines.push(`remoteError: ${preview.remote.error}`)
+    if (preview.remote.profileWarning) lines.push(`profileWarning: ${preview.remote.profileWarning}`)
     if (preview.remote.project) {
       lines.push(`project: ${preview.remote.project.ref} (${preview.remote.project.name || '-'})`)
       lines.push(`projectRegion: ${preview.remote.project.region || '-'}`)
@@ -396,6 +517,11 @@ function buildPreviewText(preview) {
     }
     lines.push(`bucketResolved: ${preview.remote.bucketResolved || '-'}`)
     lines.push(`bucketCreated: ${preview.remote.bucketCreated ? 'true' : 'false'}`)
+  }
+
+  if (Array.isArray(preview.notes) && preview.notes.length > 0) {
+    lines.push('')
+    lines.push(`notes: ${preview.notes.join(' | ')}`)
   }
 
   if (Array.isArray(preview.warnings) && preview.warnings.length > 0) {
@@ -442,9 +568,13 @@ async function runServiceParseFlow() {
 
   let finalPreview = localPreview
   if (localPreview.canLookupRemote) {
-    const confirmLookup = confirm(
-      'Đã parse được supabase.accessToken. Tiếp tục gọi Supabase Management API để tìm project/bucket và tự tạo bucket nếu thiếu?'
-    )
+    const confirmLookup = await openModal({
+      title: 'Xác nhận gọi Supabase API',
+      message: 'Đã parse được supabase.accessToken. Bạn có muốn gọi Supabase Management API để tìm project/bucket và tự tạo bucket khi thiếu không?',
+      confirmText: 'Gọi API',
+      cancelText: 'Bỏ qua',
+      showCancel: true,
+    })
 
     if (confirmLookup) {
       finalPreview = await previewSupabaseFromText({
@@ -459,7 +589,13 @@ async function runServiceParseFlow() {
     throw new Error('Không tạo được accountDraft từ dữ liệu đã parse')
   }
 
-  const confirmFillForm = confirm('Áp dụng thông tin parse vào form account?')
+  const confirmFillForm = await openModal({
+    title: 'Áp dụng vào form',
+    message: `Account: ${finalPreview.accountDraft.accountId || '-'}\nBucket: ${finalPreview.accountDraft.bucket || '-'}\nEmail: ${finalPreview.accountDraft.emailOwner || '-'}\n\nBạn có muốn điền dữ liệu này vào form account không?`,
+    confirmText: 'Áp dụng',
+    cancelText: 'Hủy',
+    showCancel: true,
+  })
   if (confirmFillForm) {
     applyAccountDraft(finalPreview.accountDraft)
     logEl.textContent = JSON.stringify({
@@ -548,7 +684,7 @@ async function refresh() {
     <tr>
       <td data-label="Account">${account.accountId}<br/><span class="hint">${account.accessKeyId || '-'} | ${account.addressingStyle || 'path'} | ${account.payloadSigningMode || 'unsigned'}</span></td>
       <td data-label="Endpoint/Bucket">${account.endpoint}<br/><span class="hint">${account.bucket}</span></td>
-      <td data-label="Owner/Supabase">${account.emailOwner || '-'}<br/><span class="hint">token=${account.hasSupabaseAccessToken ? 'yes' : 'no'} | exp=${fmtTokenExp(account.supabaseAccessTokenExp)}</span></td>
+      <td data-label="Owner/Supabase">${account.emailOwner || '-'}<br/><span class="hint">token=${account.hasSupabaseAccessToken ? 'yes' : 'no'} | exp=${fmtTokenPreview(account.supabaseAccessTokenExp)}</span></td>
       <td data-label="Used/Quota">${fmtBytes(account.usedBytes)} / ${fmtBytes(account.quotaBytes)}</td>
       <td data-label="Percent">${account.usedPercent}%</td>
       <td data-label="Status" class="${account.active ? 'ok' : 'bad'}">${account.active ? 'active' : 'inactive'}</td>
@@ -577,7 +713,17 @@ async function refresh() {
     button.addEventListener('click', async () => {
       const accountId = button.getAttribute('data-account-delete')
       if (!accountId) return
-      if (!confirm(`Delete account "${accountId}"?`)) return
+
+      const approved = await openModal({
+        title: 'Xác nhận xóa account',
+        message: `Bạn có chắc muốn xóa account "${accountId}"?`,
+        confirmText: 'Xóa',
+        cancelText: 'Giữ lại',
+        showCancel: true,
+        tone: 'warn',
+      })
+      if (!approved) return
+
       try {
         const result = await api(`/admin/api/accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' })
         if (result.warning) {
@@ -635,6 +781,13 @@ accountServiceParseBtn.addEventListener('click', async () => {
   } catch (err) {
     accountServicePreviewEl.textContent = String(err)
     logEl.textContent = String(err)
+    await openModal({
+      title: 'Lỗi parse',
+      message: String(err),
+      confirmText: 'Đã hiểu',
+      showCancel: false,
+      tone: 'warn',
+    })
   }
 })
 

@@ -139,9 +139,14 @@ export async function reloadAccountsFromRTDB() {
             ?? '',
           supabase_access_token_exp: normalizeSupabaseAccessTokenExp(
             data.supabaseAccessTokenExp
+            ?? data.supabaseAccessTokenExperimental
             ?? data.supabase_access_token_exp
+            ?? data.supabase_access_token_experimental
             ?? data['supabase.accessToken.exp']
+            ?? data['supabase.accessToken.experimental']
             ?? supabase.accessTokenExp
+            ?? supabase.accessTokenExperimental
+            ?? supabase.accessToken?.experimental
             ?? supabase.accessToken?.exp,
           ),
           quota_bytes: data.quotaBytes ?? 5_368_709_120,
