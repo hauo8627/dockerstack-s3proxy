@@ -35,6 +35,12 @@ import {
   saveCronJob,
 } from '../cronScheduler.js'
 import { createS3Client } from '../inventoryScanner.js'
+import {
+  isEmailOwner,
+  isSupabaseAccessToken,
+  normalizeSupabaseAccessTokenExp,
+  previewSupabaseS3,
+} from '../supabaseS3.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const adminHtml = readFileSync(join(__dirname, '..', 'admin-ui.html'), 'utf-8')
@@ -92,6 +98,9 @@ function toPublicAccount(row) {
     bucket: row.bucket,
     addressingStyle: row.addressing_style ?? 'path',
     payloadSigningMode: row.payload_signing_mode ?? 'unsigned',
+    emailOwner: row.email_owner ?? '',
+    supabaseAccessTokenExp: row.supabase_access_token_exp ?? null,
+    hasSupabaseAccessToken: Boolean(row.supabase_access_token),
     active: row.active === 1 || row.active === true,
     usedBytes: row.used_bytes ?? 0,
     quotaBytes: row.quota_bytes ?? 0,
@@ -133,6 +142,27 @@ function normalizePayloadSigningMode(value) {
   return ''
 }
 
+function readAccountField(payload, existing, aliases = []) {
+  for (const alias of aliases) {
+    if (payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, alias)) {
+      return payload[alias]
+    }
+    const parts = String(alias).split('.')
+    let current = payload
+    let found = true
+    for (const part of parts) {
+      if (!current || typeof current !== 'object' || !(part in current)) {
+        found = false
+        break
+      }
+      current = current[part]
+    }
+    if (found && current !== undefined) return current
+  }
+
+  return existing
+}
+
 function normalizePositiveInteger(value, fallback, fieldName, errors) {
   if (value === undefined || value === null || value === '') return fallback
   const numeric = Number(value)
@@ -163,6 +193,13 @@ function toRtdbAccountDocument(account) {
     bucket: account.bucket,
     addressingStyle: account.addressing_style ?? 'path',
     payloadSigningMode: account.payload_signing_mode ?? 'unsigned',
+    emailOwner: account.email_owner ?? '',
+    supabaseAccessToken: account.supabase_access_token ?? '',
+    supabaseAccessTokenExp: account.supabase_access_token_exp ?? null,
+    supabase: {
+      accessToken: account.supabase_access_token ?? '',
+      accessTokenExp: account.supabase_access_token_exp ?? null,
+    },
     quotaBytes: account.quota_bytes,
     usedBytes: account.used_bytes,
     active: account.active === 1,
@@ -193,6 +230,36 @@ function normalizeAccountPayload(payload, existing = null) {
   const payloadSigningMode = normalizePayloadSigningMode(
     payload.payloadSigningMode ?? payload.payload_signing_mode ?? existing?.payload_signing_mode,
   )
+  const emailOwnerRaw = readAccountField(payload, existing?.email_owner, [
+    'emailOwner',
+    'email_owner',
+    'supabase.emailOwner',
+    'supabase.email_owner',
+  ])
+  const emailOwner = normalizeString(emailOwnerRaw).toLowerCase()
+  const supabaseAccessTokenRaw = readAccountField(payload, existing?.supabase_access_token, [
+    'supabaseAccessToken',
+    'supabase_access_token',
+    'supabase.accessToken',
+    'supabase.access_token',
+    'supabase.accessToken.value',
+  ])
+  const supabaseAccessToken = normalizeString(supabaseAccessTokenRaw) || existing?.supabase_access_token || ''
+  const supabaseAccessTokenExpInput = readAccountField(
+    payload,
+    existing?.supabase_access_token_exp,
+    [
+      'supabaseAccessTokenExp',
+      'supabase_access_token_exp',
+      'supabase.accessTokenExp',
+      'supabase.access_token_exp',
+      'supabase.accessToken.exp',
+      'supabase.access_token.exp',
+    ],
+  )
+  const supabaseAccessTokenExp = supabaseAccessTokenExpInput === ''
+    ? (existing?.supabase_access_token_exp ?? null)
+    : normalizeSupabaseAccessTokenExp(supabaseAccessTokenExpInput)
   const quotaBytes = normalizePositiveInteger(
     payload.quotaBytes ?? payload.quota_bytes,
     existing?.quota_bytes ?? DEFAULT_ADMIN_QUOTA_BYTES,
@@ -220,6 +287,10 @@ function normalizeAccountPayload(payload, existing = null) {
   if (!bucket) errors.push('bucket is required')
   if (!addressingStyle) errors.push('addressingStyle must be one of: path, virtual')
   if (!payloadSigningMode) errors.push('payloadSigningMode must be one of: unsigned, signed')
+  if (emailOwner && !isEmailOwner(emailOwner)) errors.push('emailOwner must be a valid email')
+  if (supabaseAccessToken && !isSupabaseAccessToken(supabaseAccessToken)) {
+    errors.push('supabaseAccessToken must match token format sbp_...')
+  }
 
   if (endpoint) {
     try {
@@ -248,6 +319,9 @@ function normalizeAccountPayload(payload, existing = null) {
       bucket,
       addressing_style: addressingStyle,
       payload_signing_mode: payloadSigningMode,
+      email_owner: emailOwner,
+      supabase_access_token: supabaseAccessToken,
+      supabase_access_token_exp: supabaseAccessTokenExp,
       quota_bytes: quotaBytes,
       used_bytes: usedBytes,
       active,
@@ -259,25 +333,6 @@ function normalizeAccountPayload(payload, existing = null) {
 async function assertBucketExists(accountRow) {
   const client = createS3Client(accountRow)
   await client.send(new HeadBucketCommand({ Bucket: accountRow.bucket }))
-}
-
-function pocketbaseCompatibility() {
-  return {
-    supported: {
-      putObject: true,
-      getObject: true,
-      deleteObject: true,
-      headObject: true,
-      multipartUpload: true,
-      listBucket: true,
-      presignedStyleAuth: true,
-    },
-    caveats: [
-      'Nên chạy PocketBase với S3 path-style endpoint trỏ thẳng vào s3proxy.',
-      'Admin endpoint /admin hiện skip x-api-key, cần đặt sau Caddy Basic Auth.',
-      'Một số API S3 nâng cao (ACL/policy/lifecycle...) chưa implement đầy đủ.',
-    ],
-  }
 }
 
 function readStreamBodyToString(body) {
@@ -396,7 +451,6 @@ export default async function adminRoutes(fastify, _opts) {
       jobs: listCronJobs(),
       cronKinds: getCronJobKinds(),
       accounts,
-      compatibility: pocketbaseCompatibility(),
     })
   })
 
@@ -407,6 +461,44 @@ export default async function adminRoutes(fastify, _opts) {
     return reply.send({
       total: accounts.length,
       accounts,
+    })
+  })
+
+  fastify.post('/admin/api/account-services/preview', {
+    config: { skipAuth: true },
+  }, async (request, reply) => {
+    const payload = parseBodyObject(request.body)
+    const rawInput = String(payload.rawInput ?? payload.rawText ?? payload.raw ?? '')
+
+    if (!rawInput.trim()) {
+      return reply.code(400).send({
+        ok: false,
+        error: 'rawInput is required',
+      })
+    }
+
+    const requestedServices = Array.isArray(payload.services)
+      ? payload.services.map((item) => normalizeString(item)).filter(Boolean)
+      : [normalizeString(payload.service)].filter(Boolean)
+
+    const useSupabaseS3 = requestedServices.length === 0 || requestedServices.includes('supabaseS3')
+    if (!useSupabaseS3) {
+      return reply.code(400).send({
+        ok: false,
+        error: 'Only service `supabaseS3` is supported in this version',
+      })
+    }
+
+    const preview = await previewSupabaseS3(rawInput, {
+      lookupRemote: payload.lookupRemote === true,
+      createBucketIfMissing: payload.createBucketIfMissing === true,
+      bucketName: normalizeString(payload.bucketName ?? payload.preferredBucketName) || undefined,
+    })
+
+    return reply.send({
+      ok: true,
+      service: 'supabaseS3',
+      preview,
     })
   })
 

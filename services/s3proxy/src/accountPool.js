@@ -16,6 +16,7 @@ import {
   buildRtdbAccountPath,
   resolveAccountIdFromRtdbEntry,
 } from './accountId.js'
+import { normalizeSupabaseAccessTokenExp } from './supabaseS3.js'
 
 export class StorageFullError extends Error {
   constructor(message = 'All storage accounts are at capacity') {
@@ -121,6 +122,7 @@ export async function reloadAccountsFromRTDB() {
         const accountId = resolveAccountIdFromRtdbEntry(accountKey, data?.accountId ?? data?.account_id)
         if (!accountId) continue
         ids.push(accountId)
+        const supabase = data?.supabase && typeof data.supabase === 'object' ? data.supabase : {}
         upsertAccount({
           account_id: accountId,
           access_key_id: data.accessKeyId,
@@ -130,6 +132,18 @@ export async function reloadAccountsFromRTDB() {
           bucket: data.bucket,
           addressing_style: data.addressingStyle ?? data.addressing_style ?? 'path',
           payload_signing_mode: data.payloadSigningMode ?? data.payload_signing_mode ?? 'unsigned',
+          email_owner: data.emailOwner ?? data.email_owner ?? supabase.emailOwner ?? '',
+          supabase_access_token: data.supabaseAccessToken
+            ?? data.supabase_access_token
+            ?? supabase.accessToken
+            ?? '',
+          supabase_access_token_exp: normalizeSupabaseAccessTokenExp(
+            data.supabaseAccessTokenExp
+            ?? data.supabase_access_token_exp
+            ?? data['supabase.accessToken.exp']
+            ?? supabase.accessTokenExp
+            ?? supabase.accessToken?.exp,
+          ),
           quota_bytes: data.quotaBytes ?? 5_368_709_120,
           used_bytes: data.usedBytes ?? 0,
           active: data.active ? 1 : 0,

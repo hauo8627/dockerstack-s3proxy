@@ -85,6 +85,9 @@ db.exec(`
     bucket         TEXT    NOT NULL,
     addressing_style TEXT  NOT NULL DEFAULT 'path',
     payload_signing_mode TEXT NOT NULL DEFAULT 'unsigned',
+    email_owner    TEXT    NOT NULL DEFAULT '',
+    supabase_access_token TEXT NOT NULL DEFAULT '',
+    supabase_access_token_exp INTEGER,
     quota_bytes    INTEGER NOT NULL DEFAULT 5368709120,
     used_bytes     INTEGER NOT NULL DEFAULT 0,
     active         INTEGER NOT NULL DEFAULT 1,
@@ -161,6 +164,9 @@ ensureColumn('routes', 'last_reconciled_at', 'last_reconciled_at INTEGER')
 ensureColumn('multipart_uploads', 'backend_key', "backend_key TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'addressing_style', "addressing_style TEXT NOT NULL DEFAULT 'path'")
 ensureColumn('accounts', 'payload_signing_mode', "payload_signing_mode TEXT NOT NULL DEFAULT 'unsigned'")
+ensureColumn('accounts', 'email_owner', "email_owner TEXT NOT NULL DEFAULT ''")
+ensureColumn('accounts', 'supabase_access_token', "supabase_access_token TEXT NOT NULL DEFAULT ''")
+ensureColumn('accounts', 'supabase_access_token_exp', 'supabase_access_token_exp INTEGER')
 ensureColumn('buckets', 'updated_at', 'updated_at INTEGER NOT NULL DEFAULT 0')
 ensureColumn('buckets', 'deleted_at', 'deleted_at INTEGER')
 ensureColumn('buckets', 'versioning_status', "versioning_status TEXT NOT NULL DEFAULT ''")
@@ -293,10 +299,10 @@ const stmts = {
   upsertAccount: db.prepare(`
     INSERT OR REPLACE INTO accounts
       (account_id, access_key_id, secret_key, endpoint, region, bucket, addressing_style, payload_signing_mode,
-       quota_bytes, used_bytes, active, added_at)
+       email_owner, supabase_access_token, supabase_access_token_exp, quota_bytes, used_bytes, active, added_at)
     VALUES
       (@account_id, @access_key_id, @secret_key, @endpoint, @region, @bucket, @addressing_style, @payload_signing_mode,
-       @quota_bytes, @used_bytes, @active, @added_at)
+       @email_owner, @supabase_access_token, @supabase_access_token_exp, @quota_bytes, @used_bytes, @active, @added_at)
   `),
   getAllAccounts: db.prepare(`SELECT * FROM accounts ORDER BY used_bytes ASC, account_id ASC`),
   getAllActiveAccounts: db.prepare(`SELECT * FROM accounts WHERE active = 1 ORDER BY used_bytes ASC, account_id ASC`),
@@ -486,6 +492,9 @@ export function upsertAccount(account) {
     bucket: account.bucket,
     addressing_style: account.addressing_style ?? 'path',
     payload_signing_mode: account.payload_signing_mode ?? 'unsigned',
+    email_owner: account.email_owner ?? '',
+    supabase_access_token: account.supabase_access_token ?? '',
+    supabase_access_token_exp: account.supabase_access_token_exp ?? null,
     quota_bytes: account.quota_bytes ?? 5_368_709_120,
     used_bytes: account.used_bytes ?? 0,
     active: account.active ?? 1,

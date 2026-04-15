@@ -11,6 +11,11 @@ import {
   suggestAccountId,
   validateAccountIdForRealtime,
 } from '../accountId.js'
+import {
+  isEmailOwner,
+  isSupabaseAccessToken,
+  normalizeSupabaseAccessTokenExp,
+} from '../supabaseS3.js'
 
 function hasOwn(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key)
@@ -74,7 +79,18 @@ function normalizePayloadSigningMode(value) {
 
 function looksLikeSingleAccountDocument(value) {
   if (!isPlainObject(value)) return false
-  return ['accountId', 'account_id', 'accessKeyId', 'access_key_id', 'secretAccessKey', 'secret_key', 'endpoint', 'bucket']
+  return [
+    'accountId',
+    'account_id',
+    'accessKeyId',
+    'access_key_id',
+    'secretAccessKey',
+    'secret_key',
+    'endpoint',
+    'bucket',
+    'emailOwner',
+    'supabaseAccessToken',
+  ]
     .some((field) => hasOwn(value, field))
 }
 
@@ -120,6 +136,13 @@ function toRtdbAccountDocument(account) {
     bucket: account.bucket,
     addressingStyle: account.addressing_style ?? 'path',
     payloadSigningMode: account.payload_signing_mode ?? 'unsigned',
+    emailOwner: account.email_owner ?? '',
+    supabaseAccessToken: account.supabase_access_token ?? '',
+    supabaseAccessTokenExp: account.supabase_access_token_exp ?? null,
+    supabase: {
+      accessToken: account.supabase_access_token ?? '',
+      accessTokenExp: account.supabase_access_token_exp ?? null,
+    },
     quotaBytes: account.quota_bytes,
     usedBytes: account.used_bytes,
     active: account.active === 1,
@@ -136,6 +159,9 @@ function toPublicAccount(account, action = null) {
     bucket: account.bucket,
     addressingStyle: account.addressing_style ?? 'path',
     payloadSigningMode: account.payload_signing_mode ?? 'unsigned',
+    emailOwner: account.email_owner ?? '',
+    supabaseAccessTokenExp: account.supabase_access_token_exp ?? null,
+    hasSupabaseAccessToken: Boolean(account.supabase_access_token),
     quotaBytes: account.quota_bytes,
     usedBytes: account.used_bytes,
     active: account.active === 1 || account.active === true,
@@ -180,6 +206,25 @@ function normalizeAccountEntries(payload) {
     const bucket = normalizeString(entry.bucket)
     const addressingStyle = normalizeAddressingStyle(entry.addressingStyle ?? entry.addressing_style)
     const payloadSigningMode = normalizePayloadSigningMode(entry.payloadSigningMode ?? entry.payload_signing_mode)
+    const emailOwner = normalizeString(
+      entry.emailOwner
+      ?? entry.email_owner
+      ?? entry['supabase.emailOwner']
+      ?? entry?.supabase?.emailOwner,
+    ).toLowerCase()
+    const supabaseAccessToken = normalizeString(
+      entry.supabaseAccessToken
+      ?? entry.supabase_access_token
+      ?? entry['supabase.accessToken']
+      ?? entry?.supabase?.accessToken,
+    )
+    const supabaseAccessTokenExp = normalizeSupabaseAccessTokenExp(
+      entry.supabaseAccessTokenExp
+      ?? entry.supabase_access_token_exp
+      ?? entry['supabase.accessToken.exp']
+      ?? entry?.supabase?.accessTokenExp
+      ?? entry?.supabase?.accessToken?.exp,
+    )
 
     if (!accountIdValidation.valid) {
       const suggestion = suggestAccountId(accountId)
@@ -196,6 +241,12 @@ function normalizeAccountEntries(payload) {
     if (!bucket) errors.push(`${sourceLabel}.bucket is required`)
     if (!addressingStyle) errors.push(`${sourceLabel}.addressingStyle must be one of: path, virtual`)
     if (!payloadSigningMode) errors.push(`${sourceLabel}.payloadSigningMode must be one of: unsigned, signed`)
+    if (emailOwner && !isEmailOwner(emailOwner)) {
+      errors.push(`${sourceLabel}.emailOwner must be a valid email`)
+    }
+    if (supabaseAccessToken && !isSupabaseAccessToken(supabaseAccessToken)) {
+      errors.push(`${sourceLabel}.supabaseAccessToken must match token format sbp_...`)
+    }
 
     if (accountIdValidation.valid) {
       const normalizedId = accountIdValidation.accountId
@@ -235,6 +286,9 @@ function normalizeAccountEntries(payload) {
       bucket,
       addressing_style: addressingStyle,
       payload_signing_mode: payloadSigningMode,
+      email_owner: emailOwner,
+      supabase_access_token: supabaseAccessToken,
+      supabase_access_token_exp: supabaseAccessTokenExp,
       quota_bytes: quotaBytes,
       used_bytes: usedBytes,
       active,

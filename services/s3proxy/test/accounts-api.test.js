@@ -216,6 +216,9 @@ async function testSingleAccountImport(fastify) {
         endpoint: 'https://project-01.supabase.co/storage/v1/s3',
         region: 'ap-southeast-1',
         bucket: 'bucket-01',
+        emailOwner: 'owner01@example.com',
+        supabaseAccessToken: 'sbp_fe0648851adf6768514af4249fdb8e036e515318',
+        supabaseAccessTokenExp: 1893456000,
         addressingStyle: 'virtual',
         payloadSigningMode: 'signed',
       },
@@ -230,10 +233,17 @@ async function testSingleAccountImport(fastify) {
     assert(body.accounts[0].hasSecret === true, `single import hasSecret=${body.accounts[0].hasSecret}`)
     assert(body.accounts[0].addressingStyle === 'virtual', `single import addressingStyle=${body.accounts[0].addressingStyle}`)
     assert(body.accounts[0].payloadSigningMode === 'signed', `single import payloadSigningMode=${body.accounts[0].payloadSigningMode}`)
+    assert(body.accounts[0].emailOwner === 'owner01@example.com', `single import emailOwner=${body.accounts[0].emailOwner}`)
+    assert(body.accounts[0].hasSupabaseAccessToken === true, `single import hasSupabaseAccessToken=${body.accounts[0].hasSupabaseAccessToken}`)
+    assert(body.accounts[0].supabaseAccessTokenExp === 1893456000, `single import supabaseAccessTokenExp=${body.accounts[0].supabaseAccessTokenExp}`)
     assert(!('secretAccessKey' in body.accounts[0]), 'single import response leaked secretAccessKey')
+    assert(!('supabaseAccessToken' in body.accounts[0]), 'single import response leaked supabaseAccessToken')
     assert(fakeRtdb.state.accounts.acc01?.accountId === 'acc01', 'single import missing accountId in fake RTDB')
     assert(fakeRtdb.state.accounts.acc01?.addressingStyle === 'virtual', 'single import missing addressingStyle in fake RTDB')
     assert(fakeRtdb.state.accounts.acc01?.payloadSigningMode === 'signed', 'single import missing payloadSigningMode in fake RTDB')
+    assert(fakeRtdb.state.accounts.acc01?.emailOwner === 'owner01@example.com', 'single import missing emailOwner in fake RTDB')
+    assert(fakeRtdb.state.accounts.acc01?.supabaseAccessToken === 'sbp_fe0648851adf6768514af4249fdb8e036e515318', 'single import missing supabaseAccessToken in fake RTDB')
+    assert(fakeRtdb.state.accounts.acc01?.supabaseAccessTokenExp === 1893456000, 'single import missing supabaseAccessTokenExp in fake RTDB')
     assert(fakeRtdb.state.accounts.acc01?.bucket === 'bucket-01', 'single import missing in fake RTDB')
     ok('POST /admin/accounts -> import 1 account vao SQLite + RTDB va khong tra ve secret')
   } catch (err) {
