@@ -158,6 +158,7 @@ function flattenDockerAccessGroups(groups) {
 
 function deriveDockerAccessFromEnv() {
   const projectName = readResolvedEnv("PROJECT_NAME") || "myapp";
+  const projectNameTailscale = readResolvedEnv("PROJECT_NAME_TAILSCALE") || readResolvedEnv("PROJECT_NAME") || "myapp";
   const domain = readResolvedEnv("DOMAIN");
   const tailnetDomain = readResolvedEnv("TAILSCALE_TAILNET_DOMAIN");
   const dozzlePort = readResolvedEnv("DOZZLE_HOST_PORT") || "18080";
@@ -165,7 +166,7 @@ function deriveDockerAccessFromEnv() {
   const websshPort = readResolvedEnv("WEBSSH_HOST_PORT") || "17681";
   const cloudflaredHostnames = collectResolvedEnvPrefix(CLOUDFLARED_TUNNEL_HOSTNAME_PREFIX);
   const customEnv = collectResolvedEnvPrefix(DOCKER_ACCESS_URL_PREFIX);
-  const tailscaleHost = tailnetDomain ? `${projectName}.${tailnetDomain}` : "";
+  const tailscaleHost = tailnetDomain ? `${projectNameTailscale}.${tailnetDomain}` : "";
 
   const cloudflaredItems = [
     { key: "root", label: "Root", envKey: `${CLOUDFLARED_TUNNEL_HOSTNAME_PREFIX}1` },
